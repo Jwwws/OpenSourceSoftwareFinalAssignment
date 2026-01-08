@@ -218,7 +218,130 @@ class GitHistoryAnalyzer:
         else:
             return '晚上 (18-24)'
 
+    def analyze_bug_patterns(self) -> Dict:
+        """分析Bug产生的模式和规律"""
+        print("\n开始分析Bug产生模式...")
 
+        results = {}
+
+        if self.bug_fixes_df.empty:
+            print("没有找到Bug修复提交")
+            return results
+
+        # 1. Bug修复的时间分布
+        results['time_analysis'] = {
+            'by_hour': self.bug_fixes_df['hour_of_day'].value_counts().sort_index().to_dict(),
+            'by_day': self.bug_fixes_df['day_of_week'].value_counts().sort_index().to_dict(),
+            'by_month': self.bug_fixes_df['month'].value_counts().sort_index().to_dict(),
+            'by_time_category': self.bug_fixes_df['time_category'].value_counts().to_dict(),
+            'weekend_vs_weekday': {
+                'weekend': self.bug_fixes_df[self.bug_fixes_df['is_weekend']].shape[0],
+                'weekday': self.bug_fixes_df[~self.bug_fixes_df['is_weekend']].shape[0]
+            }
+        }
+
+        # 2. 作者分析
+        author_stats = self.bug_fixes_df['author'].value_counts()
+        results['author_analysis'] = {
+            'top_bug_fixers': author_stats.head(10).to_dict(),
+            'bug_fixes_per_author': len(self.bug_fixes_df) / len(self.df['author'].unique()),
+            'author_concentration': author_stats.head(5).sum() / len(self.bug_fixes_df) * 100
+        }
+
+        # 3. 文件类型分析
+        bug_file_types = []
+        for files in self.bug_fixes_df['modified_files']:
+            if files:
+                bug_file_types.extend([os.path.splitext(f)[1] for f in files.split(',')])
+
+        results['file_type_analysis'] = {
+            'most_common_extensions': dict(Counter(bug_file_types).most_common(10)),
+            'py_files_in_bug_fixes': self.bug_fixes_df['py_files'].mean(),
+            'cython_files_in_bug_fixes': self.bug_fixes_df['cython_files'].mean(),
+            'test_files_in_bug_fixes': self.bug_fixes_df['test_files'].mean(),
+        }
+
+        # 4. 提交大小分析
+        results['commit_size_analysis'] = {
+            'avg_files_in_bug_fix': self.bug_fixes_df['files_changed'].mean(),
+            'avg_lines_in_bug_fix': self.bug_fixes_df['total_lines_changed'].mean(),
+            'avg_insertions_in_bug_fix': self.bug_fixes_df['insertions'].mean(),
+            'avg_deletions_in_bug_fix': self.bug_fixes_df['deletions'].mean(),
+            'bug_fix_vs_non_bug_fix_size_ratio': (
+                self.bug_fixes_df['total_lines_changed'].mean() /
+                self.non_bug_fixes_df['total_lines_changed'].mean()
+                if not self.non_bug_fixes_df.empty else 0
+            )
+        }
+
+        # 5. Bug关键词分析
+        bug_patterns = self.bug_fixes_df['bug_pattern'].dropna().value_counts()
+        results['bug_keyword_analysis'] = {
+            'most_common_keywords': bug_patterns.head(10).to_dict()
+        }
+
+        # 6. 高风险时间段识别
+        bug_rate_by_hour = []
+        for hour in range(24):
+            hour_commits = self.df[self.df['hour_of_day'] == hour]
+            if len(hour_commits) > 0:
+                bug_rate = hour_commits['is_bug_fix'].mean()
+                bug_rate_by_hour.append((hour, bug_rate, len(hour_commits)))
+
+        bug_rate_by_hour.sort(key=lambda x: x[1], reverse=True)
+        results['high_risk_periods'] = [
+            {'hour': h, 'bug_rate': br, 'commit_count': cc}
+            for h, br, cc in bug_rate_by_hour[:5]
+        ]
+
+        # 7. Bug修复的季节性模式
+        seasonal_patterns = {}
+        for month in range(1, 13):
+            month_commits = self.df[self.df['month'] == month]
+            if len(month_commits) > 10:  # 确保有足够的数据
+                seasonal_patterns[month] = {
+                    'bug_rate': month_commits['is_bug_fix'].mean(),
+                    'total_commits': len(month_commits),
+                    'bug_fixes': month_commits['is_bug_fix'].sum()
+                }
+
+        results['seasonal_patterns'] = seasonal_patterns
+
+        self.analysis_results = results
+        return results
+
+    def identify_high_risk_patterns(self) -> Dict:
+        """识别高风险模式（最容易产生Bug的情况）"""
+        print("\n识别高风险模式...")
+
+        patterns = {}
+
+        # 1. 高风险文件类型
+        file_risk_scores = {}
+        for idx, row in self.df.iterrows():
+            if row['modified_files']:
+                files = row['modified_files'].split(',')
+                for file in files:
+                    ext = os.path.splitext(file)[1]
+                    file_risk_scores.setdefault(ext, {'bug_count': 0, 'total_count': 0})
+                    file_risk_scores[ext]['total_count'] += 1
+                    if row['is_bug_fix']:
+                        file_risk_scores[ext]['bug_count'] += 1
+
+        # 计算风险分数
+        risk_scores = {}
+        for ext, counts in file_risk_scores.items():
+            if counts['total_count'] > 5:  # 至少有5次修改
+                risk_score = counts['bug_count'] / counts['total_count']
+                risk_scores[ext] = {
+                    'risk_score': risk_score,
+                    'bug_count': counts['bug_count'],
+                    'total_count': counts['total_count']
+                }
+
+        patterns['high_risk_file_types'] = dict(
+            sorted(risk_scores.items(), key=lambda x: x[1]['risk_score'], reverse=True)[:10]
+        )
 
 
 if __name__ == "__main__":
