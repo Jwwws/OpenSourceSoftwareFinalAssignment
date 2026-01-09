@@ -342,6 +342,102 @@ class GitHistoryAnalyzer:
         patterns['high_risk_file_types'] = dict(
             sorted(risk_scores.items(), key=lambda x: x[1]['risk_score'], reverse=True)[:10]
         )
+        # 2. 高风险时间段
+        time_risk = {}
+        for time_cat in ['深夜 (0-6)', '上午 (6-12)', '下午 (12-18)', '晚上 (18-24)']:
+            time_commits = self.df[self.df['time_category'] == time_cat]
+            if len(time_commits) > 0:
+                bug_rate = time_commits['is_bug_fix'].mean()
+                time_risk[time_cat] = {
+                    'bug_rate': bug_rate,
+                    'total_commits': len(time_commits)
+                }
+
+        patterns['high_risk_times'] = time_risk
+
+        # 3. 高风险提交特征
+        patterns['high_risk_commit_characteristics'] = {
+            'large_commits_bug_rate': self.df[self.df['total_lines_changed'] > 100]['is_bug_fix'].mean(),
+            'small_commits_bug_rate': self.df[self.df['total_lines_changed'] <= 10]['is_bug_fix'].mean(),
+            'multi_file_bug_rate': self.df[self.df['files_changed'] > 5]['is_bug_fix'].mean(),
+            'single_file_bug_rate': self.df[self.df['files_changed'] == 1]['is_bug_fix'].mean(),
+            'refactor_bug_rate': self.df[self.df['is_refactor']]['is_bug_fix'].mean(),
+            'non_refactor_bug_rate': self.df[~self.df['is_refactor']]['is_bug_fix'].mean()
+        }
+
+        # 4. 高风险作者（引入Bug最多的作者）
+        author_risk = {}
+        for author in self.df['author'].unique():
+            author_commits = self.df[self.df['author'] == author]
+            if len(author_commits) > 10:  # 至少有10个提交
+                bug_rate = author_commits['is_bug_fix'].mean()
+                author_risk[author] = {
+                    'bug_rate': bug_rate,
+                    'total_commits': len(author_commits),
+                    'bug_count': author_commits['is_bug_fix'].sum()
+                }
+
+        patterns['high_risk_authors'] = dict(
+            sorted(author_risk.items(), key=lambda x: x[1]['bug_rate'], reverse=True)[:10]
+        )
+
+        return patterns
+
+    def generate_summary_report(self, output_dir: str = "git_analysis_report"):
+        """生成完整的分析报告"""
+        print(f"\n生成分析报告到目录: {output_dir}")
+
+        # 创建输出目录
+        os.makedirs(output_dir, exist_ok=True)
+
+        # 1. 保存原始数据
+        if self.df is not None:
+            self.df.to_csv(os.path.join(output_dir, "all_commits.csv"), index=False, encoding='utf-8')
+            self.bug_fixes_df.to_csv(os.path.join(output_dir, "bug_fixes.csv"), index=False, encoding='utf-8')
+
+        # 2. 分析bug模式
+        bug_patterns = self.analyze_bug_patterns()
+        high_risk_patterns = self.identify_high_risk_patterns()
+
+        # 3. 生成文本报告
+        report_content = self._create_text_report(bug_patterns, high_risk_patterns)
+
+        report_file = os.path.join(output_dir, "analysis_report.md")
+        with open(report_file, 'w', encoding='utf-8') as f:
+            f.write(report_content)
+
+        # 4. 生成JSON报告
+        json_report = {
+            'repository': self.repo_path,
+            'analysis_date': datetime.now().isoformat(),
+            'summary_statistics': {
+                'total_commits': len(self.df),
+                'bug_fix_commits': len(self.bug_fixes_df),
+                'bug_fix_percentage': len(self.bug_fixes_df) / len(self.df) * 100,
+                'unique_authors': len(self.df['author'].unique()),
+                'time_period_covered': {
+                    'first_commit': self.df['commit_date'].min().isoformat() if not self.df.empty else None,
+                    'last_commit': self.df['commit_date'].max().isoformat() if not self.df.empty else None
+                }
+            },
+            'bug_patterns': bug_patterns,
+            'high_risk_patterns': high_risk_patterns
+        }
+
+        with open(os.path.join(output_dir, "analysis_results.json"), 'w', encoding='utf-8') as f:
+            json.dump(json_report, f, indent=2, default=str)
+
+        # 5. 生成可视化图表
+        self._generate_visualizations(output_dir, bug_patterns, high_risk_patterns)
+
+        print(f"报告已生成！包含以下文件:")
+        print(f"  - {os.path.join(output_dir, 'analysis_report.md')}")
+        print(f"  - {os.path.join(output_dir, 'analysis_results.json')}")
+        print(f"  - {os.path.join(output_dir, 'all_commits.csv')}")
+        print(f"  - {os.path.join(output_dir, 'bug_fixes.csv')}")
+        print(f"  - {os.path.join(output_dir, 'visualizations/')} (包含所有图表)")
+
+        return report_file
 
 
 if __name__ == "__main__":
