@@ -438,7 +438,416 @@ class GitHistoryAnalyzer:
         print(f"  - {os.path.join(output_dir, 'visualizations/')} (包含所有图表)")
 
         return report_file
+    def _create_text_report(self, bug_patterns: Dict, high_risk_patterns: Dict) -> str:
+        """创建文本分析报告"""
+        report = f"""# Git提交历史分析报告
 
+## 仓库信息
+- **分析仓库**: {self.repo_path}
+- **分析时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+- **总提交数**: {len(self.df)}
+- **Bug修复提交数**: {len(self.bug_fixes_df)}
+- **Bug修复比例**: {len(self.bug_fixes_df) / len(self.df) * 100:.1f}%
+- **参与开发者数**: {len(self.df['author'].unique())}
+
+## 关键发现
+
+### 1. Bug产生的高风险模式
+
+#### 1.1 高风险时间段
+"""
+
+        # 添加高风险时间段分析
+        if 'high_risk_times' in high_risk_patterns:
+            for time_cat, data in high_risk_patterns['high_risk_times'].items():
+                report += f"- **{time_cat}**: Bug率 {data['bug_rate'] * 100:.1f}% (共{data['total_commits']}个提交)\n"
+
+        report += """
+#### 1.2 高风险文件类型
+"""
+
+        if 'high_risk_file_types' in high_risk_patterns:
+            for ext, data in list(high_risk_patterns['high_risk_file_types'].items())[:5]:
+                report += f"- **{ext if ext else '无扩展名'}**: Bug率 {data['risk_score'] * 100:.1f}% ({data['bug_count']}/{data['total_count']})\n"
+
+        report += """
+#### 1.3 高风险提交特征
+"""
+
+        if 'high_risk_commit_characteristics' in high_risk_patterns:
+            patterns = high_risk_patterns['high_risk_commit_characteristics']
+            report += f"""
+| 特征 | Bug率 | 说明 |
+|------|-------|------|
+| 大型提交 (>100行) | {patterns.get('large_commits_bug_rate', 0) * 100:.1f}% | 修改行数多的提交更容易引入Bug |
+| 小型提交 (≤10行) | {patterns.get('small_commits_bug_rate', 0) * 100:.1f}% | 小修改相对安全 |
+| 多文件提交 (>5文件) | {patterns.get('multi_file_bug_rate', 0) * 100:.1f}% | 同时修改多个文件风险较高 |
+| 单文件提交 | {patterns.get('single_file_bug_rate', 0) * 100:.1f}% | 风险相对较低 |
+| 重构提交 | {patterns.get('refactor_bug_rate', 0) * 100:.1f}% | 重构代码有一定风险 |
+| 非重构提交 | {patterns.get('non_refactor_bug_rate', 0) * 100:.1f}% | 普通功能开发风险 |
+
+"""
+
+        report += """
+### 2. Bug修复模式分析
+
+#### 2.1 时间分布
+"""
+
+        if 'time_analysis' in bug_patterns:
+            time_analysis = bug_patterns['time_analysis']
+            report += f"""
+- **工作日 vs 周末**:
+  - 工作日Bug修复: {time_analysis['weekend_vs_weekday']['weekday']} 个
+  - 周末Bug修复: {time_analysis['weekend_vs_weekday']['weekend']} 个
+  - 周末Bug修复占比: {time_analysis['weekend_vs_weekday']['weekend'] / (time_analysis['weekend_vs_weekday']['weekend'] + time_analysis['weekend_vs_weekday']['weekday']) * 100:.1f}%
+
+- **时间段分布**:
+"""
+
+            for time_cat, count in time_analysis['by_time_category'].items():
+                percentage = count / len(self.bug_fixes_df) * 100 if len(self.bug_fixes_df) > 0 else 0
+                report += f"  - {time_cat}: {count} 个 ({percentage:.1f}%)\n"
+
+        report += """
+#### 2.2 作者贡献分析
+"""
+
+        if 'author_analysis' in bug_patterns:
+            author_analysis = bug_patterns['author_analysis']
+            report += f"""
+- **Top 5 Bug修复者贡献了 {author_analysis['author_concentration']:.1f}% 的Bug修复**
+- **平均每个作者修复Bug数**: {author_analysis['bug_fixes_per_author']:.1f}
+
+**Top Bug修复者**:
+"""
+
+            for author, count in list(author_analysis['top_bug_fixers'].items())[:10]:
+                report += f"  - {author}: {count} 个Bug修复\n"
+
+        report += """
+#### 2.3 文件类型分析
+"""
+
+        if 'file_type_analysis' in bug_patterns:
+            file_analysis = bug_patterns['file_type_analysis']
+            report += f"""
+- **平均每个Bug修复涉及的文件类型**:
+  - Python文件: {file_analysis['py_files_in_bug_fixes']:.1f} 个
+  - Cython文件: {file_analysis['cython_files_in_bug_fixes']:.1f} 个
+  - 测试文件: {file_analysis['test_files_in_bug_fixes']:.1f} 个
+
+**最常出现Bug的文件扩展名**:
+"""
+
+            for ext, count in list(file_analysis['most_common_extensions'].items())[:10]:
+                report += f"  - {ext if ext else '无扩展名'}: {count} 次\n"
+
+        report += """
+### 3. 建议与改进措施
+
+#### 3.1 开发流程建议
+1. **避免高风险时间段提交**: 减少在Bug率高发时间段(深夜、周末)提交重要代码变更
+2. **代码审查重点**: 对高风险文件类型(如上文分析)的修改进行更严格的代码审查
+3. **提交大小控制**: 建议将大型变更拆分为多个小提交，降低风险
+4. **测试覆盖**: 确保高风险修改有充分的测试覆盖
+
+#### 3.2 团队管理建议
+1. **知识共享**: 将Top Bug修复者的经验在团队内部分享
+2. **新成员指导**: 为新成员提供高风险区域的代码审查和指导
+3. **代码所有权**: 为高风险模块指定明确的代码负责人
+
+#### 3.3 技术改进建议
+1. **自动化测试**: 为高风险文件类型增加自动化测试
+2. **静态分析**: 对高风险代码区域实施更严格的静态分析
+3. **监控预警**: 建立高风险提交的预警机制
+
+## 附录
+
+### 数据分析方法
+1. **Bug识别**: 基于关键词匹配(包含{len(self.bug_keywords)}个关键词)
+2. **风险计算**: Bug率 = Bug修复提交数 / 总提交数
+3. **统计分析**: 基于{len(self.df)}个提交样本进行统计推断
+
+### 数据质量说明
+- 数据来源: Git提交历史
+- 时间范围: {self.df['commit_date'].min().strftime('%Y-%m-%d') if not self.df.empty else 'N/A'} 至 {self.df['commit_date'].max().strftime('%Y-%m-%d') if not self.df.empty else 'N/A'}
+- 样本大小: {len(self.df)}个提交
+
+---
+*报告自动生成于 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*
+"""
+
+        return report
+
+    def _generate_visualizations(self, output_dir: str, bug_patterns: Dict, high_risk_patterns: Dict):
+        """生成可视化图表"""
+        viz_dir = os.path.join(output_dir, "visualizations")
+        os.makedirs(viz_dir, exist_ok=True)
+
+        # 设置样式
+        plt.style.use('seaborn-v0_8-darkgrid')
+
+        # 1. Bug修复时间分布图
+        fig, axes = plt.subplots(2, 2, figsize=(15, 12))
+        fig.suptitle('Bug修复时间分布分析', fontsize=16, fontweight='bold')
+
+        # 1.1 按小时分布
+        ax1 = axes[0, 0]
+        if 'time_analysis' in bug_patterns and 'by_hour' in bug_patterns['time_analysis']:
+            hours = list(bug_patterns['time_analysis']['by_hour'].keys())
+            counts = list(bug_patterns['time_analysis']['by_hour'].values())
+            ax1.bar(hours, counts, color='skyblue', edgecolor='black')
+            ax1.set_xlabel('小时 (0-23)')
+            ax1.set_ylabel('Bug修复数量')
+            ax1.set_title('Bug修复按小时分布')
+            ax1.grid(True, alpha=0.3)
+
+        # 1.2 按星期分布
+        ax2 = axes[0, 1]
+        if 'time_analysis' in bug_patterns and 'by_day' in bug_patterns['time_analysis']:
+            days = ['周一', '周二', '周三', '周四', '周五', '周六', '周日']
+            day_counts = []
+            for day in range(7):
+                day_counts.append(bug_patterns['time_analysis']['by_day'].get(day, 0))
+
+            colors = ['lightblue' if i < 5 else 'lightcoral' for i in range(7)]
+            ax2.bar(days, day_counts, color=colors, edgecolor='black')
+            ax2.set_xlabel('星期')
+            ax2.set_ylabel('Bug修复数量')
+            ax2.set_title('Bug修复按星期分布')
+            ax2.grid(True, alpha=0.3)
+
+        # 1.3 按时间段分布
+        ax3 = axes[1, 0]
+        if 'high_risk_times' in high_risk_patterns:
+            time_cats = list(high_risk_patterns['high_risk_times'].keys())
+            bug_rates = [data['bug_rate'] * 100 for data in high_risk_patterns['high_risk_times'].values()]
+
+            bars = ax3.bar(time_cats, bug_rates, color='salmon', edgecolor='black')
+            ax3.set_xlabel('时间段')
+            ax3.set_ylabel('Bug率 (%)')
+            ax3.set_title('各时间段Bug率比较')
+            ax3.grid(True, alpha=0.3)
+
+            # 添加数值标签
+            for bar, rate in zip(bars, bug_rates):
+                height = bar.get_height()
+                ax3.text(bar.get_x() + bar.get_width() / 2., height + 0.5,
+                         f'{rate:.1f}%', ha='center', va='bottom')
+
+        # 1.4 Bug修复者排行榜
+        ax4 = axes[1, 1]
+        if 'author_analysis' in bug_patterns and 'top_bug_fixers' in bug_patterns['author_analysis']:
+            top_authors = list(bug_patterns['author_analysis']['top_bug_fixers'].items())[:10]
+            authors = [a[0][:15] + '...' if len(a[0]) > 15 else a[0] for a in top_authors]
+            counts = [a[1] for a in top_authors]
+
+            bars = ax4.barh(authors[::-1], counts[::-1], color='lightgreen', edgecolor='black')
+            ax4.set_xlabel('Bug修复数量')
+            ax4.set_title('Top 10 Bug修复者')
+            ax4.grid(True, alpha=0.3)
+
+            # 添加数值标签
+            for i, (bar, count) in enumerate(zip(bars, counts[::-1])):
+                ax4.text(count + 0.5, bar.get_y() + bar.get_height() / 2,
+                         str(count), ha='left', va='center')
+
+        plt.tight_layout()
+        plt.savefig(os.path.join(viz_dir, 'bug_time_analysis.png'), dpi=150, bbox_inches='tight')
+        plt.close()
+
+        # 2. 高风险文件类型图
+        if 'high_risk_file_types' in high_risk_patterns and high_risk_patterns['high_risk_file_types']:
+            fig, ax = plt.subplots(figsize=(12, 8))
+
+            file_types = list(high_risk_patterns['high_risk_file_types'].keys())[:15]
+            risk_scores = [data['risk_score'] * 100 for data in
+                           list(high_risk_patterns['high_risk_file_types'].values())[:15]]
+
+            # 创建渐变色
+            colors = plt.cm.RdYlGn_r(np.linspace(0.2, 0.8, len(file_types)))
+
+            bars = ax.barh(file_types[::-1], risk_scores[::-1], color=colors, edgecolor='black')
+            ax.set_xlabel('Bug率 (%)', fontsize=12)
+            ax.set_title('高风险文件类型 (Bug率排名)', fontsize=14, fontweight='bold')
+            ax.grid(True, alpha=0.3, axis='x')
+
+            # 添加详细数值
+            for i, (bar, score, file_type) in enumerate(zip(bars, risk_scores[::-1], file_types[::-1])):
+                data = high_risk_patterns['high_risk_file_types'][file_type]
+                label = f'{score:.1f}% ({data["bug_count"]}/{data["total_count"]})'
+                ax.text(score + 0.5, bar.get_y() + bar.get_height() / 2,
+                        label, ha='left', va='center', fontsize=10)
+
+            plt.tight_layout()
+            plt.savefig(os.path.join(viz_dir, 'high_risk_file_types.png'), dpi=150, bbox_inches='tight')
+            plt.close()
+
+        # 3. Bug修复提交特征对比图
+        if not self.non_bug_fixes_df.empty:
+            fig, axes = plt.subplots(2, 2, figsize=(15, 12))
+            fig.suptitle('Bug修复 vs 非Bug修复提交特征对比', fontsize=16, fontweight='bold')
+
+            # 3.1 提交大小对比
+            ax1 = axes[0, 0]
+            bug_sizes = self.bug_fixes_df['total_lines_changed'].values
+            non_bug_sizes = self.non_bug_fixes_df['total_lines_changed'].values
+
+            # 限制大小以便可视化
+            bug_sizes_limited = np.clip(bug_sizes, 0, 500)
+            non_bug_sizes_limited = np.clip(non_bug_sizes, 0, 500)
+
+            ax1.hist(bug_sizes_limited, bins=30, alpha=0.7, label='Bug修复', color='salmon')
+            ax1.hist(non_bug_sizes_limited, bins=30, alpha=0.7, label='非Bug修复', color='lightblue')
+            ax1.set_xlabel('修改行数 (限制在500以内)')
+            ax1.set_ylabel('提交数量')
+            ax1.set_title('提交大小分布对比')
+            ax1.legend()
+            ax1.grid(True, alpha=0.3)
+
+            # 3.2 文件数量对比
+            ax2 = axes[0, 1]
+            bug_files = self.bug_fixes_df['files_changed'].values
+            non_bug_files = self.non_bug_fixes_df['files_changed'].values
+
+            ax2.boxplot([non_bug_files, bug_files], labels=['非Bug修复', 'Bug修复'])
+            ax2.set_ylabel('修改文件数')
+            ax2.set_title('修改文件数对比')
+            ax2.grid(True, alpha=0.3)
+
+            # 3.3 作者集中度
+            ax3 = axes[1, 0]
+            if 'author_analysis' in bug_patterns:
+                author_counts = list(bug_patterns['author_analysis']['top_bug_fixers'].values())
+                cumulative = np.cumsum(author_counts) / np.sum(author_counts) * 100
+
+                ax3.plot(range(1, len(cumulative) + 1), cumulative, 'o-', linewidth=2, markersize=8)
+                ax3.axhline(y=80, color='r', linestyle='--', alpha=0.5, label='80% 线')
+                ax3.set_xlabel('作者排名')
+                ax3.set_ylabel('累计Bug修复占比 (%)')
+                ax3.set_title('作者集中度分析 (洛伦兹曲线)')
+                ax3.legend()
+                ax3.grid(True, alpha=0.3)
+
+            # 3.4 时间分布对比
+            ax4 = axes[1, 1]
+            if 'high_risk_times' in high_risk_patterns:
+                time_cats = list(high_risk_patterns['high_risk_times'].keys())
+                bug_rates = [data['bug_rate'] * 100 for data in high_risk_patterns['high_risk_times'].values()]
+
+                ax4.plot(time_cats, bug_rates, 'o-', linewidth=2, markersize=10, color='darkred')
+                ax4.fill_between(time_cats, bug_rates, alpha=0.3, color='salmon')
+                ax4.set_xlabel('时间段')
+                ax4.set_ylabel('Bug率 (%)')
+                ax4.set_title('各时间段Bug率变化')
+                ax4.grid(True, alpha=0.3)
+
+                # 标记最高点
+                max_idx = np.argmax(bug_rates)
+                ax4.annotate(f'最高风险\n{bug_rates[max_idx]:.1f}%',
+                             xy=(time_cats[max_idx], bug_rates[max_idx]),
+                             xytext=(0, 20),
+                             textcoords='offset points',
+                             ha='center',
+                             arrowprops=dict(arrowstyle='->', color='red'))
+
+            plt.tight_layout()
+            plt.savefig(os.path.join(viz_dir, 'bug_vs_nonbug_comparison.png'), dpi=150, bbox_inches='tight')
+            plt.close()
+
+        print(f"已生成 {len(os.listdir(viz_dir))} 个可视化图表")
+
+    def run_complete_analysis(self, limit: int = 5000, output_dir: str = "git_analysis_report"):
+        """
+        运行完整的分析流程
+
+        Args:
+            limit: 分析的最大提交数量
+            output_dir: 输出目录
+
+        Returns:
+            分析报告文件路径
+        """
+        print("=" * 60)
+        print("开始Git提交历史深度分析")
+        print("=" * 60)
+
+        # 1. 提取历史数据
+        self.extract_git_history(limit=limit)
+
+        # 2. 生成分析报告
+        report_file = self.generate_summary_report(output_dir)
+
+        print("\n" + "=" * 60)
+        print("分析完成！")
+        print("=" * 60)
+
+        return report_file
+
+def main():
+    """
+    主函数：演示如何使用分析器
+    """
+    import sys
+
+    print("Git提交历史深度分析工具")
+    print("-" * 40)
+
+    # 获取仓库路径
+    if len(sys.argv) > 1:
+        repo_path = sys.argv[1]
+    else:
+        repo_path = input("请输入Git仓库路径 (本地路径或GitHub URL): ").strip()
+
+        if not repo_path:
+            # 默认示例（需要修改为实际路径）
+            repo_path = "/path/to/your/repository"
+            print(f"使用默认路径: {repo_path}")
+
+    # 创建分析器
+    analyzer = GitHistoryAnalyzer(repo_path)
+
+    # 运行完整分析
+    try:
+        report_file = analyzer.run_complete_analysis(
+            limit=2000,  # 分析最近的2000个提交
+            output_dir="analysis_results"  # 输出目录
+        )
+
+        print(f"\n分析报告已保存到: {report_file}")
+
+        # 显示关键结论
+        print("\n关键结论摘要:")
+        print("-" * 40)
+
+        if analyzer.analysis_results:
+            bug_patterns = analyzer.analysis_results
+
+            # 计算总体Bug率
+            total_commits = len(analyzer.df)
+            bug_fixes = len(analyzer.bug_fixes_df)
+            bug_rate = bug_fixes / total_commits * 100 if total_commits > 0 else 0
+
+            print(f"1. 总体Bug率: {bug_rate:.1f}% ({bug_fixes}/{total_commits})")
+
+            # 找出最高风险时间段
+            if 'high_risk_periods' in bug_patterns and bug_patterns['high_risk_periods']:
+                highest_risk = bug_patterns['high_risk_periods'][0]
+                print(f"2. 最高风险时间段: {highest_risk['hour']}时 (Bug率: {highest_risk['bug_rate'] * 100:.1f}%)")
+
+            # 找出最高风险文件类型
+            if hasattr(analyzer, 'high_risk_patterns') and 'high_risk_file_types' in analyzer.high_risk_patterns:
+                file_types = analyzer.high_risk_patterns['high_risk_file_types']
+                if file_types:
+                    highest_risk_file = list(file_types.items())[0]
+                    print(
+                        f"3. 最高风险文件类型: {highest_risk_file[0]} (Bug率: {highest_risk_file[1]['risk_score'] * 100:.1f}%)")
+
+    except Exception as e:
+        print(f"分析过程中出错: {e}")
+        import traceback
+        traceback.print_exc()
 
 if __name__ == "__main__":
     main()
